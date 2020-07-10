@@ -1,2 +1,5 @@
 *.html
 node_modules/
+*.o
+*.out
+cpp/cmark-sample
