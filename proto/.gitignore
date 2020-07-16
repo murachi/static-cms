@@ -3,3 +3,4 @@ node_modules/
 *.o
 *.out
 cpp/cmark-sample
+cpp/srchl-sample
