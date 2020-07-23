@@ -32,7 +32,7 @@ namespace cm2html {
         int pre = 0;
         for (;;) {
           int cur = text.find_first_of(R"(<>&")"s, pre);
-          ostrm << text.substr(pre, cur);
+          ostrm << text.substr(pre, cur - pre);
           if (cur == std::string::npos) break;
           ostrm << entities.at(text[cur]);
           pre = cur + 1;
