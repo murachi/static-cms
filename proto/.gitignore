@@ -4,3 +4,4 @@ node_modules/
 *.out
 cpp/cmark-sample
 cpp/srchl-sample
+cpp/cm2html

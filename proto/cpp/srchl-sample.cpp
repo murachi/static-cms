@@ -18,6 +18,7 @@ use warnings;
 # 関数
 sub hoge {
   my $hoge = shift;
+  $hoge =~ s/piyo/hoge fuga PIYO!!/g;
   my $result = "[hoge] $hoge";
   print "$result\n";
   return $result;
@@ -38,7 +39,7 @@ __EOF__
 )"s;
 
 std::string const specialElems[] =
-  { "keyword"s, "string"s, "type"s, "comment"s, "symbol"s, "number"s, "preproc"s };
+  { "keyword"s, "string"s, "type"s, "comment"s, "symbol"s, "number"s, "preproc"s, "regexp"s };
 
 class ModernHTMLFormatter: public srchilite::Formatter {
   std::ostream & ostrm;
