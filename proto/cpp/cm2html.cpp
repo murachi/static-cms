@@ -2,12 +2,9 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <sstream>
 #include <cstdio>
-#include <srchilite/sourcehighlighter.h>
-#include <srchilite/parserexception.h>
-#include <srchilite/formatterparams.h>
 
-#include "pre-formatter.hpp"
 #include "cm2html.hpp"
 
 using namespace std::string_literals;
@@ -15,7 +12,7 @@ using namespace std::string_literals;
 namespace cm2html {
   void CMark2HTML::process(std::string const& file_name)
   {
-    std::unique_ptr<FILE, FileDeleter> fin{fopen(file_name.c_str(), "rb")};
+    std::unique_ptr<FILE, FileDeleter> fin{std::fopen(file_name.c_str(), "rb")};
     if (!fin) {
       doc_root.reset();
       result_html.reset();
@@ -39,34 +36,23 @@ namespace cm2html {
   }
 
   void CMark2HTML::highlightCodeBlock(cmark_node * node)
-  try {
+  {
     std::string language = cmark_node_get_fence_info(node);
-    srchilite::SourceHighlighter highlighter{lang_def_mgr.getHighlightState((language + ".lang"s).c_str())};
-    highlighter.setFormatterManager(&fmt_mgr);
-    srchilite::FormatterParams prms;
-    highlighter.setFormatterParams(&prms);
-
-    fmt_strm.str(R"(<pre><code class="lang )"s + language + R"(">)");
-    fmt_strm.seekp(0, std::ios_base::end);
+    std::string lang_file = lang_map.getMappedFileName(language);
+    if (lang_file.empty()) {
+      // 言語指定がないか、または未対応の言語指定の場合は、何もしない。
+      return;
+    }
 
     std::istringstream istrm{cmark_node_get_literal(node)};
-    std::string line;
-    while (istrm.good()) {
-      std::getline(istrm, line);
-      prms.start = 0;
-      highlighter.highlightParagraph(line);
-      fmt_strm << std::endl;
-    }
-    fmt_strm.seekp(-1, std::ios_base::end);  // 最後に空行が入っちゃうのを除去
-    fmt_strm << "</code></pre>";
+    std::ostringstream ostrm;
+
+    src_highlight.highlight(istrm, ostrm, lang_file);
 
     auto * new_node = cmark_node_new(CMARK_NODE_HTML_BLOCK);
-    cmark_node_set_literal(new_node, fmt_strm.str().c_str());
+    cmark_node_set_literal(new_node, ostrm.str().c_str());
     cmark_node_replace(node, new_node);
     cmark_node_free(node);
-  }
-  catch (srchilite::ParserException) {
-    // パーサーエラーの場合は何もしない (単に言語指定がない場合も含む)
   }
 }
 

@@ -5,19 +5,19 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
-#include <sstream>
 #include <cmark.h>
-#include <srchilite/regexrulefactory.h>
-#include <srchilite/langdefmanager.h>
-#include <srchilite/formattermanager.h>
+#include <srchilite/sourcehighlight.h>
+#include <srchilite/langmap.h>
 
-#include "pre-formatter.hpp"
+#ifndef DATADIR
+#define DATADIR ""s
+#endif
 
 namespace cm2html {
   using namespace std::string_literals;
 
   struct FileDeleter {
-    void operator()(FILE * fp) { fclose(fp); }
+    void operator()(FILE * fp) { std::fclose(fp); }
   };
   struct CMarkNodeDeleter {
     void operator()(cmark_node * node) { cmark_node_free(node); }
@@ -34,18 +34,15 @@ namespace cm2html {
     std::unique_ptr<char, LegacyDeleter> result_html;
     bool is_error;
     std::string err_msg;
-    srchilite::RegexRuleFactory rule_factory;
-    srchilite::LangDefManager lang_def_mgr;
-    std::ostringstream fmt_strm;
-    srchilite::FormatterManager fmt_mgr;
+    srchilite::SourceHighlight src_highlight;
+    srchilite::LangMap lang_map;
 
   public:
-    CMark2HTML()
-      : is_error{false}, lang_def_mgr{&rule_factory}
-      , fmt_mgr{PreFormatter::shptr_t{new PreFormatter{fmt_strm}}}
+    CMark2HTML() : is_error{false}, src_highlight{"htmlcss.outlang"s}, lang_map{DATADIR, "lang.map"s}
     {
-      PreFormatter::addAllFormatter(fmt_mgr, fmt_strm);
+      src_highlight.setDataDir(DATADIR);
     }
+    ~CMark2HTML() = default;
 
   private:
     CMark2HTML(CMark2HTML const&) = delete;
