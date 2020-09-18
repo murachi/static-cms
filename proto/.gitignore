@@ -1,7 +1,9 @@
 *.html
+*.css
 node_modules/
 *.o
 *.out
 cpp/cmark-sample
 cpp/srchl-sample
 cpp/cm2html
+rust/*/target/

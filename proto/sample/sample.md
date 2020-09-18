@@ -56,6 +56,7 @@ namespace hoge {
   @param[out]   ostrm 出力先ストリームオブジェクト
   @param[in]    hoge  ほげほげクラスオブジェクト
   @return ostrm を返す
+  */
   inline std::ostream & operator<<(std::ostream & ostrm, Hoge const& hoge) { return ostrm << hoge.getText(); }
 }
 ```
