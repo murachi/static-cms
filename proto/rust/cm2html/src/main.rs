@@ -34,12 +34,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         br.read_to_string(&mut contents)?;
     }
 
-    let parser = Parser::new_ext(&contents, Options::ENABLE_STRIKETHROUGH);
-    for event in parser {
-        println!("{:?}", event);
-    }
+    //let parser = Parser::new_ext(&contents, Options::ENABLE_STRIKETHROUGH);
+    //for event in parser {
+    //    println!("{:?}", event);
+    //}
 
-    let stx_set = SyntaxSet::load_defaults_newlines();
+    let stx_set = SyntaxSet::load_defaults_nonewlines();
     //for stx in stx_set.syntaxes() {
     //    //println!("{:?}", stx);
     //    println!("{} ({}) - first line = {:?}, scope = {:?}",
@@ -47,9 +47,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     //}
 
     let parser = Parser::new_ext(&contents, Options::ENABLE_STRIKETHROUGH);
-    let mut stx: Option<&SyntaxReference> = None;
-    let parser = parser.map(|event| match event {
+    //let mut stx: Option<&SyntaxReference> = None;
+    let mut html_generator: Option<ClassedHTMLGenerator> = None;
+    let parser = parser.map(|event| -> Vec<Event> { match event {
         Event::Start(ref tag) => {
+            let mut stx: Option<&SyntaxReference> = None;
             if let Tag::CodeBlock(ref cbkind) = tag {
                 if let CodeBlockKind::Fenced(ref fence) = cbkind {
                     if let CowStr::Borrowed(ref fc_text) = fence {
@@ -57,24 +59,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            if stx.is_some() { Event::SoftBreak }
-            else { event }
-        },
-        Event::Text(text) if stx.is_some() => {
-            let mut html_generator = ClassedHTMLGenerator::new_with_class_style(
-                stx.unwrap(), &stx_set, ClassStyle::Spaced);
-            for line in text.into_string().lines() {
-                html_generator.parse_html_for_line(&line);
+            if stx.is_some() {
+                html_generator = Some(ClassedHTMLGenerator::new_with_class_style(
+                    stx.unwrap(), &stx_set, ClassStyle::Spaced));
+                vec![]
             }
-            let html = format!("<pre class=\"src\">{}</pre>", html_generator.finalize());
-            Event::Html(CowStr::Boxed(html.into_boxed_str()))
+            else { vec![event] }
         },
-        Event::End(_) if stx.is_some() => {
-            stx = None;
-            Event::SoftBreak
+        Event::Text(text) if html_generator.is_some() => {
+            for line in text.into_string().lines() {
+                html_generator.as_mut().unwrap().parse_html_for_line(&line);
+            }
+            vec![]
         },
-        _ => event,
-    });
+        Event::End(_) => {
+            if let Some(hg) = html_generator.take() {
+                let html = format!("<pre class=\"src\">{}</pre>", hg.finalize());
+                vec![Event::Html(CowStr::Boxed(html.into_boxed_str()))]
+            }
+            else { vec![event] }
+        },
+        _ => vec![event],
+    }}).flatten();
 
     let mut html_output = String::new();
     pulldown_cmark::html::push_html(&mut html_output, parser);
