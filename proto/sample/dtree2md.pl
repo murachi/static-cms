@@ -115,12 +115,16 @@ sub walk {
     $fence = $fence || (exists $ext2fence{$ext} ? $ext2fence{$ext}->($dir_stat) : '');
     # Markdown として出力
     open my $fin, "<$item" or die "ファイル $item を開けません";
-    print "- $file\n  ```$fence\n";
+    print "- $file\n";
+    print "  ```$fence\n" unless $fence eq 'markdown';
+    my $empty_lines = 0;
     while (<$fin>) {
       chomp;
-      print "  $_\n";
+      my $is_empty = /^\s*$/;
+      print $fence eq 'markdown' ? "> $_\n" : "  $_\n" unless $empty_lines && $is_empty;
+      $empty_lines = $is_empty;
     }
-    print "  ```\n";
+    print $fence eq 'markdown' ? "\n" : "  ```\n";
   }
 }
 
