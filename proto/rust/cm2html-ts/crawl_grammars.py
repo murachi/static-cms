@@ -2,7 +2,15 @@
 import os, re, json, base64, argparse
 import http.client
 
+class CrawlerException(Exception):
+    pass
+
 class Crawler:
+    EXCLUDE_LANGS = ('cli',)
+    SRC_PLACES = {
+        'ocaml': (('interface', 'src'), ('ocaml', 'src')),
+    }
+
     def __init__(self, token):
         self.token = token
 
@@ -20,6 +28,8 @@ class Crawler:
 
     def download_all_grammars(self):
         for lang in self.pickup_langs():
+            if lang in self.EXCLUDE_LANGS:
+                continue
             print(f"downloading {lang} grammar...")
             self.download_grammar(lang)
 
@@ -29,16 +39,32 @@ class Crawler:
         return langs
 
     def download_grammar(self, lang):
-        dir = os.path.join(os.path.dirname(__file__), "src", "c", lang)
-        os.makedirs(dir, exist_ok = True)
+        src_root_dir = os.path.join(os.path.dirname(__file__), "src", "c", lang)
+        os.makedirs(src_root_dir, exist_ok = True)
 
         repo = self.request_API(f"/repos/tree-sitter/tree-sitter-{lang}/branches/master")
         tree_root = self.request_API(f"/repos/tree-sitter/tree-sitter-{lang}/git/trees/{repo['commit']['sha']}")
-        for item in tree_root["tree"]:
-            if item["path"] == "src":
-                src_tree_sha = item["sha"]
-                break
-        self.download_github_files(lang, dir, src_tree_sha)
+
+        src_places = self.SRC_PLACES.get(lang, (('src',),))
+        for place in src_places:
+            dir = src_root_dir
+            tree = tree_root
+            for subdir in place:
+                if subdir != 'src':
+                    dir = os.path.join(src_root_dir, subdir)
+                    os.makedirs(dir, exist_ok = True)
+                for item in tree["tree"]:
+                    if item["path"] == subdir:
+                        sha = item["sha"]
+                        break
+                else:
+                    raise CrawlerException(
+                        f"tree-sitter-{lang} リポジトリの master ブランチにて " +
+                        f"{'/'.join(place)} ディレクトリが見つかりません")
+                if subdir != 'src':
+                    tree = self.request_API(f"/repos/tree-sitter/tree-sitter-{lang}/git/trees/{sha}")
+
+            self.download_github_files(lang, dir, sha)
 
     def download_github_files(self, lang, dir, tree_sha):
         tree = self.request_API(f"/repos/tree-sitter/tree-sitter-{lang}/git/trees/{tree_sha}")
@@ -64,16 +90,19 @@ def update_build_script():
             while dir != c_src_root:
                 dir, t = os.path.split(dir)
                 ancs.append(t)
-            libname_prefix = "lib{}".format('_'.join(reversed(ancs)))
+            ancs.reverse()
+            libname_prefix = "lib{}".format('_'.join(ancs))
             for file in (f for f in files if f.endswith(".c") or f.endswith(".C")):
                 print("    cc::build::new()", file = fout)
-                print(f'        .file("{file}")', file = fout)
+                print(f'        .include("{dir}")', file = fout)
+                print(f'        .file("{os.path.join(dir, file)}")', file = fout)
                 print(f'        .compile("{libname_prefix}_{os.path.splitext(file)[0].replace(".", "_")}.a");',
                     file = fout)
             for file in (f for f in files if re.search(r"\.(?:cc|cpp|cxx|c\+\+)$", f, re.I)):
                 print("    cc::build::new()", file = fout)
                 print("        .cpp(true)", file = fout)
-                print(f'        .file("{file}")', file = fout)
+                print(f'        .include("{os.path.join(dir, *ancs)}")', file = fout)
+                print(f'        .file("{os.path.join(dir, file)}")', file = fout)
                 print(f'        .compile("{libname_prefix}_{os.path.splitext(file)[0].replace(".", "_")}.a");',
                     file = fout)
         print("}", file = fout)
