@@ -2,6 +2,11 @@
 import os, re, json, base64, argparse
 import http.client
 
+EXCLUDE_SRC_FILE = ('binding.cc',)
+HEADER_MISSING = {
+    'razor': ['c-sharp'],
+}
+
 class CrawlerException(Exception):
     pass
 
@@ -91,18 +96,19 @@ def update_build_script():
                 dir, t = os.path.split(dir)
                 ancs.append(t)
             ancs.reverse()
+            include_dir = os.path.join(c_src_root, *HEADER_MISSING.get(os.path.basename(cur), ancs))
             libname_prefix = "lib{}".format('_'.join(ancs))
-            for file in (f for f in files if f.endswith(".c") or f.endswith(".C")):
-                print("    cc::build::new()", file = fout)
-                print(f'        .include("{dir}")', file = fout)
-                print(f'        .file("{os.path.join(dir, file)}")', file = fout)
+            for file in (f for f in files if (f.endswith(".c") or f.endswith(".C")) and f not in EXCLUDE_SRC_FILE):
+                print("    cc::Build::new()", file = fout)
+                print(f'        .include("{include_dir}")', file = fout)
+                print(f'        .file("{os.path.join(cur, file)}")', file = fout)
                 print(f'        .compile("{libname_prefix}_{os.path.splitext(file)[0].replace(".", "_")}.a");',
                     file = fout)
-            for file in (f for f in files if re.search(r"\.(?:cc|cpp|cxx|c\+\+)$", f, re.I)):
-                print("    cc::build::new()", file = fout)
+            for file in (f for f in files if re.search(r"\.(?:cc|cpp|cxx|c\+\+)$", f, re.I) and f not in EXCLUDE_SRC_FILE):
+                print("    cc::Build::new()", file = fout)
                 print("        .cpp(true)", file = fout)
-                print(f'        .include("{os.path.join(dir, *ancs)}")', file = fout)
-                print(f'        .file("{os.path.join(dir, file)}")', file = fout)
+                print(f'        .include("{include_dir}")', file = fout)
+                print(f'        .file("{os.path.join(cur, file)}")', file = fout)
                 print(f'        .compile("{libname_prefix}_{os.path.splitext(file)[0].replace(".", "_")}.a");',
                     file = fout)
         print("}", file = fout)
