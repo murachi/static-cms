@@ -1,3 +1,5 @@
+mod langman;
+
 use std::error::Error;
 use std::fs::File;
 use std::{env, process};
@@ -5,6 +7,7 @@ use std::io::{BufReader, BufWriter};
 use std::io::prelude::*;
 use std::path::Path;
 use pulldown_cmark::{Parser, Options, Event, Tag, CodeBlockKind, CowStr};
+use tree_sitter;
 
 const HTML_PREFIX: &str = r#"<!doctype html>
 <html lang="ja">
@@ -37,35 +40,58 @@ fn main() -> Result<(), Box<dyn Error>> {
     //}
 
     let parser = Parser::new_ext(&contents, Options::ENABLE_STRIKETHROUGH);
-    //let mut stx: Option<&SyntaxReference> = None;
-    let mut html_generator: Option<ClassedHTMLGenerator> = None;
+    let mut lang_parser = tree_sitter::Parser::new();
+    let mut fenced_text: Option<String> = None;
+    let mut src = String::new();
     let parser = parser.map(|event| -> Vec<Event> { match event {
         Event::Start(ref tag) => {
-            let mut stx: Option<&SyntaxReference> = None;
             if let Tag::CodeBlock(ref cbkind) = tag {
                 if let CodeBlockKind::Fenced(ref fence) = cbkind {
                     if let CowStr::Borrowed(ref fc_text) = fence {
-                        stx = stx_set.find_syntax_by_token(*fc_text);
+                        if *fc_text == "c" {
+                            fenced_text = Some("c".to_string());
+                            src = String::new();
+                        }
                     }
                 }
             }
-            if stx.is_some() {
-                html_generator = Some(ClassedHTMLGenerator::new_with_class_style(
-                    stx.unwrap(), &stx_set, ClassStyle::Spaced));
-                vec![]
-            }
+            if fenced_text.is_some() { vec![] }
             else { vec![event] }
         },
-        Event::Text(text) if html_generator.is_some() => {
+        Event::Text(text) if fenced_text.is_some() => {
             for line in text.into_string().lines() {
-                html_generator.as_mut().unwrap().parse_html_for_line(&line);
+                src.push_str(&format!("{}\n", line));
             }
             vec![]
         },
         Event::End(_) => {
-            if let Some(hg) = html_generator.take() {
-                let html = format!("<pre class=\"src\">{}</pre>", hg.finalize());
-                vec![Event::Html(CowStr::Boxed(html.into_boxed_str()))]
+            if let Some(lang_name) = fenced_text.take() {
+                let mut events: Vec<Event> = vec![Event::Start(Tag::List(None))];
+                let language = unsafe { langman::tree_sitter_c() };
+                lang_parser.set_language(language).unwrap();
+                let tree = lang_parser.parse(&src, None).unwrap();
+                let mut cursor = tree.walk();
+                loop {
+                    let node = cursor.node();
+                    events.append(&mut vec![
+                        Event::Start(Tag::Item),
+                        Event::Text(CowStr::Boxed(
+                            format!("id={}, kind={}, start_position={}, end_position={}",
+                                node.id(), node.kind(), node.start_position(), node.end_position())
+                            .into_boxed_str())),
+                        Event::End(Tag::Item),
+                    ]);
+                    if cursor.goto_first_child() {
+                        events.push(Event::Start(Tag::List(None)));
+                    }
+                    else if !cursor.goto_next_sibling() {
+                        events.push(Event::End(Tag::List(None)));
+                        if !cursor.goto_parent() {
+                            break;
+                        }
+                    }
+                }
+                events
             }
             else { vec![event] }
         },
@@ -75,22 +101,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut html_output = String::new();
     pulldown_cmark::html::push_html(&mut html_output, parser);
 
-    let theme_set = ThemeSet::load_defaults();
-    let theme = theme_set.themes.get("InspiredGitHub").unwrap();
-    let css = syntect::html::css_for_theme_with_class_style(&theme, ClassStyle::Spaced);
-
     if args.len() <= 2 {
-        print!("{}{}{}", html_prefix, html_output, html_suffix);
-        println!("\n--- CSS ---\n{}", css);
+        print!("{}{}{}", HTML_PREFIX, html_output, HTML_SUFFIX);
     }
     else {
         let path = Path::new(&args[2]);
         let html_file = File::create(path)?;
         let mut bw = BufWriter::new(html_file);
-        write!(bw, "{}{}{}", html_prefix, html_output, html_suffix)?;
-        let css_file = File::create(path.parent().unwrap().join("syntect.css"))?;
-        bw = BufWriter::new(css_file);
-        write!(bw, "{}", css)?;
+        write!(bw, "{}{}{}", HTML_PREFIX, html_output, HTML_SUFFIX)?;
     }
 
 

@@ -4,20 +4,21 @@ import http.client
 
 EXCLUDE_SRC_FILE = ('binding.cc',)
 HEADER_MISSING = {
-    'razor': ['c-sharp'],
+    ('razor', 'src'): ['c-sharp', 'src'],
 }
 
 class CrawlerException(Exception):
     pass
 
 class Crawler:
-    EXCLUDE_LANGS = ('cli',)
+    EXCLUDE_LANGS = ('cli', 'razor', 'ocaml')
     SRC_PLACES = {
         'ocaml': (('interface', 'src'), ('ocaml', 'src')),
     }
 
     def __init__(self, token):
         self.token = token
+        self.langs = None
 
     def request_API(self, url, method = "GET", post_data = None):
         con = http.client.HTTPSConnection("api.github.com")
@@ -33,15 +34,20 @@ class Crawler:
 
     def download_all_grammars(self):
         for lang in self.pickup_langs():
-            if lang in self.EXCLUDE_LANGS:
-                continue
             print(f"downloading {lang} grammar...")
             self.download_grammar(lang)
 
     def pickup_langs(self):
+        if self.langs:
+            return self.langs
+
         data = self.request_API("/users/tree-sitter/repos")
-        langs = [n["name"][12:] for n in data if n["name"].startswith("tree-sitter-")]
-        return langs
+        self.langs = [
+            lang for lang
+            in (n["name"][12:] for n in data if n["name"].startswith("tree-sitter-"))
+            if lang in self.EXCLUDE_LANGS
+        ]
+        return self.langs
 
     def download_grammar(self, lang):
         src_root_dir = os.path.join(os.path.dirname(__file__), "src", "c", lang)
@@ -55,9 +61,8 @@ class Crawler:
             dir = src_root_dir
             tree = tree_root
             for subdir in place:
-                if subdir != 'src':
-                    dir = os.path.join(src_root_dir, subdir)
-                    os.makedirs(dir, exist_ok = True)
+                dir = os.path.join(dir, subdir)
+                os.makedirs(dir, exist_ok = True)
                 for item in tree["tree"]:
                     if item["path"] == subdir:
                         sha = item["sha"]
@@ -85,7 +90,7 @@ class Crawler:
                 with open(os.path.join(dir, name), "wb") as fout:
                     fout.write(base64.b64decode(blob["content"]))
 
-def update_build_script():
+def update_build_script(langs):
     with open(os.path.join(os.path.dirname(__file__), "build.rs"), "w") as fout:
         print("fn main() {", file = fout)
         c_src_root = os.path.join(os.path.dirname(__file__), "src", "c")
@@ -96,8 +101,10 @@ def update_build_script():
                 dir, t = os.path.split(dir)
                 ancs.append(t)
             ancs.reverse()
-            include_dir = os.path.join(c_src_root, *HEADER_MISSING.get(os.path.basename(cur), ancs))
-            libname_prefix = "lib{}".format('_'.join(ancs))
+            if ancs[0] not in langs:
+                continue
+            include_dir = os.path.join(c_src_root, *HEADER_MISSING.get(tuple(ancs), ancs))
+            libname_prefix = "lib{}".format('_'.join([n for n in ancs if n != 'src']))
             for file in (f for f in files if (f.endswith(".c") or f.endswith(".C")) and f not in EXCLUDE_SRC_FILE):
                 print("    cc::Build::new()", file = fout)
                 print(f'        .include("{include_dir}")', file = fout)
@@ -121,4 +128,4 @@ if __name__ == "__main__":
     crawler = Crawler(args.token)
     crawler.download_all_grammars()
 
-    update_build_script()
+    update_build_script(crawler.pickup_langs())
