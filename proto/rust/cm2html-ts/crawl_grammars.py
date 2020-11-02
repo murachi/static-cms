@@ -45,7 +45,7 @@ class Crawler:
         self.langs = [
             lang for lang
             in (n["name"][12:] for n in data if n["name"].startswith("tree-sitter-"))
-            if lang in self.EXCLUDE_LANGS
+            if lang not in self.EXCLUDE_LANGS
         ]
         return self.langs
 
@@ -101,7 +101,7 @@ def update_build_script(langs):
                 dir, t = os.path.split(dir)
                 ancs.append(t)
             ancs.reverse()
-            if ancs[0] not in langs:
+            if not ancs or ancs[0] not in langs:
                 continue
             include_dir = os.path.join(c_src_root, *HEADER_MISSING.get(tuple(ancs), ancs))
             libname_prefix = "lib{}".format('_'.join([n for n in ancs if n != 'src']))
@@ -120,6 +120,21 @@ def update_build_script(langs):
                     file = fout)
         print("}", file = fout)
 
+def update_langman_module(langs):
+    langs = [n.replace('-', '_') for n in langs]
+    with open(os.path.join(os.path.dirname(__file__), "src", "langman.rs"), "w") as fout:
+        print("use tree_sitter::Language;\n", file = fout)
+        for lang in langs:
+            print('extern "C" {{ fn tree_sitter_{}() -> Language; }}'.format(lang), file = fout)
+        print('''
+pub fn select_language<T: AsRef<str>>(lang_name: T) -> Option<Language> {
+    match lang_name.as_ref() {''', file = fout)
+        for lang in langs:
+            print('        "{0}" => Some(unsafe {{ tree_sitter_{0}() }}),'.format(lang), file = fout)
+        print('''        _ => None,
+    }
+}''', file = fout)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "tree-sitter 用文法定義クローラ")
     parser.add_argument('-t', '--token', required = True, metavar = "認証用トークン")
@@ -129,3 +144,4 @@ if __name__ == "__main__":
     crawler.download_all_grammars()
 
     update_build_script(crawler.pickup_langs())
+    update_langman_module(crawler.pickup_langs())
