@@ -1,18 +1,18 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <sstream>
+#include <cstring>
 #include <srchilite/sourcehighlight.h>
 #include <srchilite/langmap.h>
-#include <cstring>
 
 using namespace std::string_literals;
 
 extern "C" {
   typedef struct {
-    srchilite::SourceHighlight src_highlight,
-    srchilite::LangMap lang_map,
-    std::string lang_file,
-    std::string result,
+    srchilite::SourceHighlight src_highlight;
+    srchilite::LangMap lang_map;
+    std::string lang_file;
   } SourceHighlightImpl;
 
   SourceHighlightImpl* SourceHighlight_new(char const* output_lang, char const* data_dir)
@@ -22,6 +22,7 @@ extern "C" {
     auto shi = new SourceHighlightImpl {
       srchilite::SourceHighlight{ol},
       srchilite::LangMap{dd, "lang.map"s},
+      ""s,
     };
     shi->src_highlight.setDataDir(dd);
     return shi;
@@ -38,7 +39,7 @@ extern "C" {
     return !shi->lang_file.empty();
   }
 
-  char const* SourceHighlight_highlight(SourceHighlightImpl * shi, char const* src)
+  char * SourceHighlight_highlight(SourceHighlightImpl * shi, char const* src)
   {
     if (shi->lang_file.empty()) {
       return nullptr;
@@ -46,7 +47,9 @@ extern "C" {
     std::istringstream istrm{src};
     std::ostringstream ostrm;
     shi->src_highlight.highlight(istrm, ostrm, shi->lang_file);
-    shi->result = ostrm.str();
-    return shi->result.c_str();
+    auto result = ostrm.str();
+    auto result_cstr = new char[result.length() + 1];
+    std::strcpy(result_cstr, result.c_str());
+    return result_cstr;
   }
 }
