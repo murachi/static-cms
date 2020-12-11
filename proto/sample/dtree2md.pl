@@ -1,5 +1,9 @@
 use strict;
 use List::Util qw/any/;
+use File::Path qw/make_path/;
+use File::Copy;
+
+my $MD_FILENAME_FORMAT = 'file-%s.%s';
 
 my %ext2fence = (
   cpp => sub { $_[0]->{'c++'} = 1; 'c++' },
@@ -47,98 +51,187 @@ my %fn2fence = (
   'Vagrantfile' => sub { 'ruby' },
 );
 
-my %ng_ext = qw(sdf 1 keepme 1 png 1 webp 1 ico 1);
+my %picture_ext = qw(png 1 jpg 1 jpeg 1 gif 1 ico 1 svg 1 webp 1);
 
-my @ignore_pattern;
+my %binary_ext = qw(sdf 1 keepme 1);
 
 sub walk {
-  my ($cd, $depth) = @_;
-  opendir my $dh, $cd or die "ディレクトリ $cd を開けません";
-  print "#" x $depth, " `$cd`\n\n";
-  my $dir_stat = {};
-  my @items = grep { !/^\.+$/ } readdir $dh;
-  # リポジトリルート下の README.md は最初にそのまま出力する
-  if ($depth == 1) {
-    @items = grep {
-      if ($_ =~ /^readme\.md$/i) {
-        open my $fin, "<$cd/$_" or die "ファイル $cd/$_ を開けません";
-        while (<$fin>) { chomp; print "$_\n"; }
-        print "\n-----\n\n";
-        0
-      }
-      else { 1 }
-    } @items;
+  my ($src, $dist, $distroot, $ignore_pattern) = @_;
+  $distroot = $distroot || $dist;
+  opendir my $dh, $src or die "ディレクトリ $src を開けません";
+  unless (-d $dist) {
+    make_path($dist) or die "ディレクトリ $dist を作成できません";
   }
+  # '.' と '..' は除外。拡張子の辞書順でソート。
+  my @items = sort {
+    my ($xt, $xe) = $a =~ /^(.*?)(?:\.([^\.]+))?$/;
+    my ($yt, $ye) = $b =~ /^(.*?)(?:\.([^\.]+))?$/;
+    $xe cmp $ye || $xt cmp $yt
+  } grep { !/^\.+$/ } readdir $dh;
   # .gitignore があれば情報を収集
   if (any { $_ eq '.gitignore' } @items) {
-    open my $fin, "<$cd/.gitignore" or die "ファイル $cd/.gitignore を開けません";
+    open my $fin, "<$src/.gitignore" or die "ファイル $src/.gitignore を開けません";
     my @patterns = <$fin>;
     chomp @patterns;
-    push @ignore_pattern, { base => $cd, patterns => [@patterns] };
+    push @$ignore_pattern, { base => $src, patterns => [@patterns] };
   }
 
+  my ($dir_stat, @dist_items) = ({});
   ITEMS_LOOP:
   for my $file (@items) {
-    my $item = "$cd/$file";
+    my $item = "$src/$file";
     # .gitignore 適用対象を除外
-    for my $igpat (@ignore_pattern) {
-      my ($base, $patterns) = @$igpat{qw(base patterns)};
-      my $is_skip = 0;
-      for my $pattern (@$patterns) {
-        my $pat = "$pattern";
-        my $hit_flag = !($pat =~ /^\~/);
-        $pat = $hit_flag ? $pat : substr $pat, 1;
-        $pat =~ s/\./\\./g;
-        $pat =~ s/\*/.*?/g;
-        $pat =~ s!/$!!;
-        if ($pat =~ m!^/!) {
-          $is_skip = $item =~ m!^\Q$base\E$pat(/.*|$)! ? $hit_flag : $is_skip;
-        }
-        else {
-          $is_skip = $item =~ m!^\Q$base\E/(.*?/)?$pat(/.*|$)! ? $hit_flag : $is_skip;
-        }
-      }
-      next ITEMS_LOOP if $is_skip;
+    for my $igpat (@$ignore_pattern) {
+      next ITEMS_LOOP if is_ignore($item, @$igpat{qw(base patterns)});
     }
     # ディレクトリなら再帰
-    walk($item, $depth + 1), next if -d $item;
-    # fence 情報を決める
-    my ($ext) = $file =~ /\.(.*?)$/ or ('');
-    next if exists $ng_ext{$ext};
-    my $fence = exists $fn2fence{$file} ? $fn2fence{$file}->() : '';
-    unless ($fence) {
-      for my $p2f (@pat2fence) {
-        my ($pat, $fc) = @$p2f{qw(pat fence)};
-        $fence = $fc, last if $file =~ /$pat/;
-      }
+    if (-d $item) {
+      walk($item, "$dist/$file", $distroot, $ignore_pattern);
+      push @dist_items, ["$file", 'd'];
+      next;
     }
-    $fence = $fence || (exists $ext2fence{$ext} ? $ext2fence{$ext}->($dir_stat) : '');
-    # Markdown として出力
-    open my $fin, "<$item" or die "ファイル $item を開けません";
-    print "- $file\n";
-    print "  ```$fence\n" unless $fence eq 'markdown';
-    my $empty_lines = 0;
-    while (<$fin>) {
-      chomp;
-      my $is_empty = /^\s*$/;
-      print $fence eq 'markdown' ? "> $_\n" : "  $_\n" unless $empty_lines && $is_empty;
-      $empty_lines = $is_empty;
-    }
-    print $fence eq 'markdown' ? "\n" : "  ```\n";
+    push @dist_items, dispose_file($file, $src, $dist, $dir_stat);
+  }
+
+  open my $fout, ">$dist/index.md" or die "ファイル $dist/index.md を作成できません";
+  print $fout "# $src ディレクトリ\n\n";
+  for my $elem (@dist_items) {
+    my ($file, $type) = @$elem;
+    my $htmlfile = sprintf $MD_FILENAME_FORMAT, $file, 'html';
+    if ($type eq 'd') { print $fout "- [$file/]($file/index.html)\n"; }
+    else { print $fout "- [$file]($htmlfile)\n"}
   }
 }
 
-unless (@ARGV) {
+sub is_ignore {
+  my ($item, $base, $patterns) = @_;
+  my $is_ignore = 0;
+  for my $pattern (@$patterns) {
+    my $pat = "$pattern";
+    my $hit_flag = !($pat =~ /^\~/);
+    $pat = $hit_flag ? $pat : substr $pat, 1;
+    $pat =~ s/\./\\./g;
+    $pat =~ s/\*/.*?/g;
+    $pat =~ s!/$!!;
+    if ($pat =~ m!^/!) {
+      $is_ignore = $item =~ m!^\Q$base\E$pat(/.*|$)! ? $hit_flag : $is_ignore;
+    }
+    else {
+      $is_ignore = $item =~ m!^\Q$base\E/(.*?/)?$pat(/.*|$)! ? $hit_flag : $is_ignore;
+    }
+  }
+
+  $is_ignore
+}
+
+sub dispose_file {
+  my ($file, $src, $dist, $dir_stat) = @_;
+  my $item = "$src/$file";
+  my ($ext) = $file =~ /\.([^\.]*)$/ or ('');
+  # Markdown ファイルはそのままコピー
+  if ($ext eq 'md') {
+    copy($item, "$dist/$file") or die "$item -> $dist/$file のコピーに失敗";
+    return ["$dist/$file", 'f'];
+  }
+  # 画像ファイルの場合は、画像を埋め込む Markdown を生成
+  return copy_picture_with_markdown($file, $src, $dist) if exists $picture_ext{$ext};
+  # バイナリファイルの場合は、リンクを含む Markdown を生成
+  return copy_binary_with_markdown($file, $src, $dist) if exists $binary_ext{$ext};
+  # それ以外の場合、ソースを埋め込んだ Markdown を生成
+  return write_markdown($file, $src, $dist, $dir_stat);
+}
+
+sub write_markdown {
+  my ($file, $src, $dist, $dir_stat) = @_;
+  my $item = "$src/$file";
+  my ($ext) = $file =~ /\.([^\.]*)$/ or ('');
+  # fence 情報を決める
+  my $fence = exists $fn2fence{$file} ? $fn2fence{$file}->() : '';
+  unless ($fence) {
+    for my $p2f (@pat2fence) {
+      my ($pat, $fc) = @$p2f{qw(pat fence)};
+      $fence = $fc, last if $file =~ /$pat/;
+    }
+  }
+  $fence = $fence || (exists $ext2fence{$ext} ? $ext2fence{$ext}->($dir_stat) : '');
+  # Markdown として出力
+  open my $fin, "<$item" or die "ファイル $item を開けません";
+  my $distfile = "$dist/" . sprintf($MD_FILENAME_FORMAT, $file, 'md');
+  open my $fout, ">$distfile" or die "ファイル $distfile を開けません";
+  print $fout <<ENDLINE;
+# `$file`
+
+- ファイルの種類: `$fence`
+- ファイルの拡張子: `$ext`
+- ファイルサイズ: ${\(-s $item)}
+
+```$fence
+ENDLINE
+  my $empty_lines = 0;
+  while (<$fin>) {
+    chomp;
+    my $is_empty = /^\s*$/;
+    print $fout "$_\n" unless $empty_lines && $is_empty;
+    $empty_lines = $is_empty;
+  }
+  print $fout "```\n";
+
+  [$file, 'f']
+}
+
+sub copy_picture_with_markdown {
+  my ($file, $src, $dist) = @_;
+  my $item = "$src/$file";
+  copy($item, "$dist/$file") or die "ファイル $item を $dist へコピーできません";
+  # Markdown 作成
+  my $distfile = "$dist/" . sprintf($MD_FILENAME_FORMAT, $file, 'md');
+  open my $fout, ">$distfile" or die "ファイル $distfile を開けません";
+  print $fout <<ENDLINE;
+# `$file`
+
+- ファイルの種類: 画像ファイル
+- ファイルサイズ: ${\(-s $item)}
+
+![$file]($file)
+ENDLINE
+
+  [$file, 'f']
+}
+
+sub copy_binary_with_markdown {
+  my ($file, $src, $dist) = @_;
+  my $item = "$src/$file";
+  copy($item, "$dist/$file") or die "ファイル $item を $dist へコピーできません";
+  # Markdown 作成
+  my $distfile = "$dist/" . sprintf($MD_FILENAME_FORMAT, $file, 'md');
+  open my $fout, ">$distfile" or die "ファイル $distfile を開けません";
+  print $fout <<ENDLINE;
+# `$file`
+
+- ファイルの種類: その他バイナリ
+- ファイルサイズ: ${\(-s $item)}
+
+**[ダウンロード]($file)**
+ENDLINE
+
+  [$file, 'f']
+}
+
+my ($src, $dist) = @ARGV;
+unless ($src) {
   print STDERR ("収集するソースツリーがあるディレクトリを指定してください。\n");
   exit 1;
 }
-my $root = $ARGV[0];
-$root =~ s!/$!!;
+unless ($dist) {
+  print STDERR ("出力先ディレクトリを指定してください。\n");
+  exit 1;
+}
+$src =~ s!/$!!;
+$dist =~ s!/$!!;
 
-unless (-d $root) {
+unless (-d $src) {
   print STDERR ("存在するディレクトリを指定してください。\n");
   exit 1;
 }
 
-push @ignore_pattern, { base => $root, patterns => ['.git/'] };
-walk($root, 1);
+walk($src, $dist, undef, [{ base => $src, patterns => ['.git/'] }]);
