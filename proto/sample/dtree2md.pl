@@ -97,9 +97,16 @@ sub walk {
   print $fout "# $src ディレクトリ\n\n";
   for my $elem (@dist_items) {
     my ($file, $type) = @$elem;
-    my $htmlfile = sprintf $MD_FILENAME_FORMAT, $file, 'html';
     if ($type eq 'd') { print $fout "- [$file/]($file/index.html)\n"; }
-    else { print $fout "- [$file]($htmlfile)\n"}
+    elsif ($type eq 'md') {
+      my $htmlfile = $file;
+      $htmlfile =~ s/md$/html/i;
+      print $fout "- [$file]($htmlfile)\n";
+    }
+    else {
+      my $htmlfile = sprintf $MD_FILENAME_FORMAT, $file, 'html';
+      print $fout "- [$file]($htmlfile)\n";
+    }
   }
 }
 
@@ -131,7 +138,7 @@ sub dispose_file {
   # Markdown ファイルはそのままコピー
   if ($ext eq 'md') {
     copy($item, "$dist/$file") or die "$item -> $dist/$file のコピーに失敗";
-    return ["$dist/$file", 'f'];
+    return ["$file", 'md'];
   }
   # 画像ファイルの場合は、画像を埋め込む Markdown を生成
   return copy_picture_with_markdown($file, $src, $dist) if exists $picture_ext{$ext};
