@@ -7,3 +7,5 @@ cpp/cmark-sample
 cpp/srchl-sample
 cpp/cm2html
 rust/*/target/
+*/cov19/
+*/covid19/
