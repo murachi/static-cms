@@ -1,0 +1,12 @@
+{
+  "WebHookSignature": {
+    "secret": "(secret phrase)"
+  },
+  "GitRepository": {
+    "baseDir": "/var/static-cms/git-repo",
+    "remoteURL": "https://github.com/user/repository.git"
+  },
+  "WebContents": {
+    "baseDir": "/var/static-cms/webroot"
+  }
+}

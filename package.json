@@ -1,0 +1,19 @@
+{
+  "type": "module",
+  "main": "exec/index.js",
+  "scripts": {
+    "postinstall": "node-config-ts",
+    "dev": "export NODE_ENV=development; node exec/index.js",
+    "build": "npx tsc",
+    "start": "export NODE_ENV=production; node exec/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-config-ts": "^3.3.1",
+    "simple-git": "^3.19.1",
+    "typescript": "^5.1.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17"
+  }
+}

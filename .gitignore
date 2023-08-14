@@ -1,0 +1,5 @@
+node_modules/
+/exec
+/config/*
+!/config/Config.d.ts
+!/config/default.json
